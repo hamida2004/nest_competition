@@ -1,0 +1,7 @@
+Product_ID
+Type
+Air_temperature
+Process_temperature
+Rotational_speed
+Torque
+Tool_wear
