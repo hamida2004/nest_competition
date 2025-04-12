@@ -140,7 +140,36 @@ def reduce(request):
                 # Disagreement: prioritize XGBoost
                 final_prediction = xgboost_prediction
 
-            # Return response
+            # Calculate the number of OFDM subcarriers
+            def calculate_ofdm_subcarriers(input_data, final_prediction):
+                """
+                Calculate the number of OFDM subcarriers based on input data and final prediction.
+                """
+                base_subcarriers = 12  # LTE default Resource Block (RB) size
+
+                # Adjust subcarrier count based on AI prediction
+                if final_prediction == 1:  # Load detected
+                    # Increase subcarriers based on bitrate demand
+                    subcarriers = max(base_subcarriers * 2, int(input_data["DL_bitrate"] / 1000))
+                else:  # No load
+                    # Minimal subcarrier allocation
+                    subcarriers = base_subcarriers
+
+                # Adjust for network mode
+                if input_data["NetworkMode"] == "NR":  # 5G NR has flexible subcarrier spacing
+                    subcarriers *= 2  # Example adjustment for 5G
+
+                # Further adjustments based on signal quality
+                if input_data["SNR"] < 10:  # Poor signal quality
+                    subcarriers *= 1.5  # Allocate more subcarriers for robustness
+                elif input_data["SNR"] > 20:  # Good signal quality
+                    subcarriers *= 0.8  # Allocate fewer subcarriers
+
+                return int(subcarriers)
+
+            num_subcarriers = calculate_ofdm_subcarriers(input_data, final_prediction)
+
+            # Return response with subcarrier count
             return JsonResponse({
                 "status": "success",
                 "prediction": final_prediction,
@@ -148,7 +177,8 @@ def reduce(request):
                     "xgboost_prediction": xgboost_prediction,
                     "lstm_prediction": lstm_prediction,
                     "mlp_prediction": mlp_prediction,
-                    "final_prediction": final_prediction
+                    "final_prediction": final_prediction,
+                    "ofdm_subcarriers": num_subcarriers  # Add subcarrier count to response
                 }
             })
 
@@ -156,8 +186,6 @@ def reduce(request):
             return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
     return JsonResponse({"status": "error", "message": "Invalid request method"}, status=405)
-
-
 # Cooling System Prediction
 cooling_system_models = {}
 
@@ -224,18 +252,36 @@ def cool(request):
             next_tmax = np.float32(next_tmax).item()  # Convert to Python float
             next_tmin = np.float32(next_tmin).item()  # Convert to Python float
 
-            # Return response
+            # Compute a single representative temperature
+            def calculate_representative_temperature(tmax, tmin):
+                """
+                Calculate a single representative temperature using a weighted average.
+                Weights favor Tmax because it typically occurs during the day.
+                """
+                weight_tmax = 0.7  # Weight for Tmax (daytime)
+                weight_tmin = 0.3  # Weight for Tmin (nighttime)
+                representative_temp = (weight_tmax * tmax) + (weight_tmin * tmin)
+                return representative_temp
+
+            representative_temp = calculate_representative_temperature(next_tmax, next_tmin)
+
+            # Return response with representative temperature
             return JsonResponse({
                 "status": "success",
-                "next_tmax": next_tmax,
-                "next_tmin": next_tmin,
+                "representative_temp": representative_temp,
+                "details": {
+                    "next_tmax": next_tmax,
+                    "next_tmin": next_tmin,
+                }
             })
 
         except Exception as e:
             return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
-
     return JsonResponse({"status": "error", "message": "Invalid request method"}, status=405)
+
+
+# this model is used to predict the failure of the machine by using the percentage of the failure and its cause if the prercentage is increasing the machine is going to fail
 @csrf_exempt
 def predict(request):
     if request.method == 'POST':
